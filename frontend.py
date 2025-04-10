@@ -37,13 +37,42 @@ def process_documents(uploaded_files, urls):
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
 
+def format_response(text):
+    """Standardizes the formatting of LLM responses."""
+    if not text:
+        return text
+
+    # Remove excessive newlines (more than 2 in a row)
+    import re
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # Ensure consistent heading formatting
+    # Convert variations of heading formats to standard markdown
+    text = re.sub(r'(?i)^\s*\*\*\s*([^\n]+?)\s*\*\*\s*$', r'## \1', text, flags=re.MULTILINE)  # Bold as h2
+    text = re.sub(r'(?i)^\s*#\s+([^\n]+?)\s*$', r'## \1', text, flags=re.MULTILINE)  # h1 to h2
+
+    # Ensure consistent list formatting
+    text = re.sub(r'(?i)^\s*[-•]\s+', r'- ', text, flags=re.MULTILINE)  # Standardize bullet points
+
+    # Ensure consistent emphasis
+    text = re.sub(r'(?i)\*([^\*\n]+?)\*', r'*\1*', text)  # Standardize italics
+    text = re.sub(r'(?i)\*\*([^\*\n]+?)\*\*', r'**\1**', text)  # Standardize bold
+
+    return text
+
 def ask_question(question):
     """Sends a question to the backend and gets the answer."""
     payload = {"question": question}
     try:
         response = requests.post(ASK_ENDPOINT, json=payload, timeout=120) # Timeout for potentially long LLM calls
         response.raise_for_status()
-        return response.json()
+        response_data = response.json()
+
+        # Apply formatting to the answer if it exists
+        if response_data.get("status") == "success" and "answer" in response_data:
+            response_data["answer"] = format_response(response_data["answer"])
+
+        return response_data
     except requests.exceptions.RequestException as e:
         st.error(f"Error connecting to backend: {e}")
         if e.response is not None:
@@ -219,6 +248,27 @@ st.header("2. Ask Questions")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Initialize format version to track if messages have been reformatted
+if "format_version" not in st.session_state:
+    st.session_state.format_version = 0
+
+# If this is a new version of the formatting, update all existing messages
+CURRENT_FORMAT_VERSION = 1
+if st.session_state.format_version < CURRENT_FORMAT_VERSION:
+    for i, message in enumerate(st.session_state.messages):
+        if message["role"] == "assistant" and not message.get("is_html", False):
+            # Format the content and add HTML styling
+            formatted_content = format_response(message["content"])
+            styled_content = f"""<div style='font-size: 1rem; line-height: 1.5; font-family: sans-serif;'>
+            {formatted_content}
+            </div>"""
+            # Update the message
+            st.session_state.messages[i]["content"] = styled_content
+            st.session_state.messages[i]["is_html"] = True
+
+    # Update the format version
+    st.session_state.format_version = CURRENT_FORMAT_VERSION
+
 # Check if the index exists when the page loads
 if "documents_processed" not in st.session_state:
     index_exists = check_index_exists()
@@ -229,7 +279,11 @@ if "documents_processed" not in st.session_state:
 # Display chat messages from history on app rerun
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        # Check if the message contains HTML content
+        if message.get("is_html", False):
+            st.markdown(message["content"], unsafe_allow_html=True)
+        else:
+            st.markdown(message["content"])
 
 # Accept user input
 if prompt := st.chat_input("Ask a question about the documents..."):
@@ -255,11 +309,19 @@ if prompt := st.chat_input("Ask a question about the documents..."):
             else:
                 # Use the error message from the backend response
                 full_response = response_data.get("message", "An error occurred.")
+                # Also format error messages for consistency
+                full_response = format_response(full_response)
 
-            message_placeholder.markdown(full_response)
+            # Apply custom styling to ensure consistent appearance
+            styled_response = f"""<div style='font-size: 1rem; line-height: 1.5; font-family: sans-serif;'>
+            {full_response}
+            </div>"""
 
-        # Add assistant response to chat history
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+            # Use unsafe_allow_html to render the styled HTML
+            message_placeholder.markdown(styled_response, unsafe_allow_html=True)
+
+        # Add assistant response to chat history with the styled version
+        st.session_state.messages.append({"role": "assistant", "content": styled_response, "is_html": True})
 
 # --- How to Run ---
 # 1. Save the files as described in the structure.
