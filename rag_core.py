@@ -124,18 +124,32 @@ def get_embeddings_model():
         raise
 
 def create_and_save_faiss_index(chunks):
-    """Creates a FAISS index from document chunks and saves it."""
+    """Creates or updates a FAISS index from document chunks and saves it."""
     if not chunks:
-        logger.warning("No chunks provided to create index.")
+        logger.warning("No chunks provided to create/update index.")
         return False
     try:
         embeddings = get_embeddings_model()
-        vector_store = FAISS.from_documents(chunks, embeddings)
-        vector_store.save_local(FAISS_INDEX_PATH)
-        logger.info(f"FAISS index created and saved to {FAISS_INDEX_PATH}")
+
+        # Check if an index already exists
+        existing_index = load_faiss_index()
+
+        if existing_index is not None:
+            # Update existing index with new chunks
+            logger.info(f"Updating existing FAISS index with {len(chunks)} new chunks")
+            existing_index.add_documents(chunks)
+            existing_index.save_local(FAISS_INDEX_PATH)
+            logger.info(f"FAISS index updated and saved to {FAISS_INDEX_PATH}")
+        else:
+            # Create new index if none exists
+            logger.info(f"Creating new FAISS index with {len(chunks)} chunks")
+            vector_store = FAISS.from_documents(chunks, embeddings)
+            vector_store.save_local(FAISS_INDEX_PATH)
+            logger.info(f"FAISS index created and saved to {FAISS_INDEX_PATH}")
+
         return True
     except Exception as e:
-        logger.error(f"Failed to create or save FAISS index: {e}")
+        logger.error(f"Failed to create or update FAISS index: {e}")
         return False
 
 def check_index_exists():
